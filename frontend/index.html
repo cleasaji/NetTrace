@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>NetTrace Investigation Console</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root { --bg:#0a0e13; --panel:#111823; --border:#1e2836; --text:#e6edf3; --muted:#8b98a5;
+          --critical:#f85149; --high:#f0883e; --medium:#d29922; --low:#3fb950; --accent:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:18px 26px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+  header h1 { margin:0; font-size:19px; }
+  .sub { color:var(--muted); font-size:12px; }
+  .container { padding:22px 26px; display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; }
+  .panel h2 { margin:0 0 12px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .toolbar { display:flex; gap:8px; margin-bottom:14px; }
+  button { background:var(--accent); color:#0a0e13; border:none; padding:7px 12px; border-radius:6px; font-weight:600; cursor:pointer; font-size:13px; }
+  button.secondary { background:transparent; color:var(--text); border:1px solid var(--border); }
+  input[type=file] { color:var(--text); font-size:12px; }
+  .report-card { border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:10px; }
+  .score-row { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .score { font-size:22px; font-weight:700; }
+  .badge { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; text-transform:uppercase; }
+  .badge.critical { background:var(--critical); color:white; }
+  .badge.high { background:var(--high); color:#1c1300; }
+  .badge.medium { background:var(--medium); color:#1c1300; }
+  .badge.low { background:var(--low); color:#04170a; }
+  .finding { font-size:12px; color:var(--muted); margin:4px 0 4px 12px; }
+  .finding .type { color:var(--accent); font-weight:600; }
+  .empty { color:var(--muted); text-align:center; padding:24px 0; font-size:13px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+const API_BASE = "http://localhost:8000";
+
+function badge(level) { return <span className={"badge " + level}>{level}</span>; }
+
+function App() {
+  const [reports, setReports] = useState({});
+  const [status, setStatus] = useState("");
+  const [file, setFile] = useState(null);
+
+  async function loadReports() {
+    const resp = await fetch(API_BASE + "/reports");
+    setReports(await resp.json());
+  }
+
+  async function uploadPcap() {
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    setStatus("Uploading and parsing PCAP...");
+    const resp = await fetch(API_BASE + "/ingest/pcap", { method: "POST", body: form });
+    const data = await resp.json();
+    setStatus(`Parsed ${data.parsed_packets} packets.`);
+  }
+
+  async function runDetection() {
+    setStatus("Running detectors...");
+    const resp = await fetch(API_BASE + "/detect/run", { method: "POST" });
+    const findings = await resp.json();
+    setStatus(`Detection complete: ${findings.length} finding(s).`);
+    await loadReports();
+  }
+
+  useEffect(() => { loadReports(); }, []);
+
+  const sources = Object.keys(reports).sort((a, b) => reports[b].threat_score - reports[a].threat_score);
+
+  return (
+    <div>
+      <header>
+        <div>
+          <h1>🌐 NetTrace</h1>
+          <div className="sub">Network threat detection & investigation engine</div>
+        </div>
+        <div className="sub">{status}</div>
+      </header>
+      <div className="container">
+        <div className="panel">
+          <h2>Ingest</h2>
+          <div className="toolbar">
+            <input type="file" accept=".pcap" onChange={e => setFile(e.target.files[0])} />
+            <button onClick={uploadPcap}>Upload PCAP</button>
+          </div>
+          <div className="toolbar">
+            <button onClick={runDetection}>Run Detection</button>
+            <button className="secondary" onClick={loadReports}>Refresh Reports</button>
+          </div>
+          <div className="sub">
+            No PCAP handy? Generate one: <code>python demo/generate_pcap.py</code>, then upload
+            <code> backend/demo/attack_scenario.pcap</code>.
+          </div>
+        </div>
+
+        <div className="panel">
+          <h2>Investigation Reports</h2>
+          {sources.length === 0 ? (
+            <div className="empty">No findings yet. Ingest flows/PCAP, then run detection.</div>
+          ) : (
+            sources.map(ip => {
+              const r = reports[ip];
+              return (
+                <div className="report-card" key={ip}>
+                  <div className="score-row">
+                    <span className="score">{r.threat_score}</span>
+                    {badge(r.risk_level)}
+                    <strong>{ip}</strong>
+                  </div>
+                  <div className="sub">{r.summary}</div>
+                  {r.findings.map(f => (
+                    <div className="finding" key={f.finding_id}>
+                      <span className="type">{f.finding_type}</span>: {f.description}
+                    </div>
+                  ))}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
